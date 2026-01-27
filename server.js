@@ -8,9 +8,17 @@ const mime = require('mime-types');
 const app = express();
 const PORT = 3000;
 const STORAGE_ROOT = path.join(__dirname, 'storage');
+const TRASH_ROOT = path.join(STORAGE_ROOT, '.nas_trash');
+const DATA_FILE = path.join(__dirname, 'nas-metadata.json');
 
-// Ensure storage root exists
+// Ensure necessary directories
 fs.ensureDirSync(STORAGE_ROOT);
+fs.ensureDirSync(TRASH_ROOT);
+
+// Initialize metadata file if not exists
+if (!fs.existsSync(DATA_FILE)) {
+    fs.writeJsonSync(DATA_FILE, { starred: [], trash: [] });
+}
 
 app.use(cors());
 app.use(express.json());
@@ -28,55 +36,49 @@ const getSafePath = (reqPath) => {
     return absolutePath;
 };
 
-// ... existing routes
-
-// Move items (File/Folder)
-app.post('/api/move', async (req, res) => {
+// Helper: Metadata Management
+const getMetadata = async () => {
     try {
-        const { sources, destination } = req.body; // sources is Array of relative paths, destination is relative path
-
-        if (!Array.isArray(sources) || sources.length === 0) {
-            return res.status(400).json({ error: 'No items selected' });
-        }
-
-        const destPathFullPath = getSafePath(destination);
-        // Ensure destination exists and is a directory
-        const destStats = await fs.stat(destPathFullPath);
-        if (!destStats.isDirectory()) {
-            return res.status(400).json({ error: 'Destination is not a directory' });
-        }
-
-        const results = await Promise.allSettled(sources.map(async (src) => {
-            const srcFullPath = getSafePath(src);
-            const fileName = path.basename(srcFullPath);
-            const destFullPath = path.join(destPathFullPath, fileName);
-
-            // Prevent moving into itself or subdirectory of itself (simple check)
-            if (destFullPath.startsWith(srcFullPath) && destFullPath !== srcFullPath) {
-                throw new Error(`Cannot move folder '${fileName}' into itself`);
-            }
-
-            // Prevent overwriting
-            if (await fs.pathExists(destFullPath)) {
-                throw new Error(`Item '${fileName}' already exists in destination`);
-            }
-
-            await fs.move(srcFullPath, destFullPath);
-            return fileName;
-        }));
-
-        const errors = results.filter(r => r.status === 'rejected').map(r => r.reason.message);
-        const success = results.filter(r => r.status === 'fulfilled').map(r => r.value);
-
-        if (errors.length > 0 && success.length === 0) {
-            return res.status(400).json({ error: errors.join(', ') });
-        }
-
-        res.json({ success: true, moved: success, errors: errors.length > 0 ? errors : undefined });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+        return await fs.readJson(DATA_FILE);
+    } catch (e) {
+        return { starred: [], trash: [] };
     }
-});
+};
+
+const saveMetadata = async (data) => {
+    await fs.writeJson(DATA_FILE, data, { spaces: 2 });
+};
+
+// Helper: Recursive Scan for Recent Files
+async function getRecentFilesRecursive(dir) {
+    let results = [];
+    const items = await fs.readdir(dir);
+
+    for (const item of items) {
+        if (item.startsWith('.')) continue; // Skip hidden files/dirs
+
+        const fullPath = path.join(dir, item);
+        const stats = await fs.stat(fullPath);
+
+        if (stats.isDirectory()) {
+            const subResults = await getRecentFilesRecursive(fullPath);
+            results = results.concat(subResults);
+        } else {
+            results.push({
+                name: item,
+                path: path.relative(STORAGE_ROOT, fullPath).replace(/\\/g, '/'),
+                size: stats.size,
+                mtime: stats.mtime,
+                isDirectory: false
+            });
+        }
+    }
+    return results;
+}
+
+// --------------------------------------------------------------------------
+// Endpoints
+// --------------------------------------------------------------------------
 
 // List files
 app.get('/api/files', async (req, res) => {
@@ -89,7 +91,7 @@ app.get('/api/files', async (req, res) => {
         }
 
         const items = await fs.readdir(dirPath);
-        const contents = await Promise.all(items.map(async (item) => {
+        const contents = await Promise.all(items.filter(i => !i.startsWith('.')).map(async (item) => {
             const itemPath = path.join(dirPath, item);
             const itemStats = await fs.stat(itemPath);
             return {
@@ -110,6 +112,248 @@ app.get('/api/files', async (req, res) => {
     }
 });
 
+// Recent Files
+app.get('/api/recent', async (req, res) => {
+    try {
+        const allFiles = await getRecentFilesRecursive(STORAGE_ROOT);
+        // Sort by mtime desc
+        allFiles.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
+        // Return top 50
+        res.json({ contents: allFiles.slice(0, 50) });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Starred Files
+app.get('/api/starred', async (req, res) => {
+    try {
+        const meta = await getMetadata();
+        const starredPaths = meta.starred || [];
+
+        const distinctPaths = [...new Set(starredPaths)];
+
+        const contents = [];
+        const validPaths = [];
+
+        for (const p of distinctPaths) {
+            try {
+                const fullPath = getSafePath(p);
+                if (await fs.pathExists(fullPath)) {
+                    const stats = await fs.stat(fullPath);
+                    contents.push({
+                        name: path.basename(fullPath),
+                        isDirectory: stats.isDirectory(),
+                        size: stats.size,
+                        mtime: stats.mtime,
+                        path: p
+                    });
+                    validPaths.push(p);
+                }
+            } catch (e) {
+                // Ignore missing files, will maintain validPaths
+            }
+        }
+
+        // Clean up metadata if some files are missing? 
+        // Optional: might be better to keep them if temporary unavailable.
+        // For now, let's just return what exists.
+
+        res.json({ contents });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/star', async (req, res) => {
+    try {
+        const { path: itemPath, starred } = req.body;
+        if (!itemPath) return res.status(400).json({ error: 'Path required' });
+
+        const meta = await getMetadata();
+        let list = new Set(meta.starred || []);
+
+        if (starred) {
+            list.add(itemPath);
+        } else {
+            list.delete(itemPath);
+        }
+
+        meta.starred = [...list];
+        await saveMetadata(meta);
+
+        res.json({ success: true, starred });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Trash
+app.get('/api/trash', async (req, res) => {
+    try {
+        const meta = await getMetadata();
+        // Return metadata entry for trash items
+        // We verify if they still exist in trash folder
+        const trash = meta.trash || [];
+        const validTrash = [];
+
+        for (const item of trash) {
+            const trashPath = path.join(TRASH_ROOT, item.trashId);
+            if (await fs.pathExists(trashPath)) {
+                validTrash.push({
+                    name: item.originalName,
+                    path: item.originalPath, // Just for display
+                    size: item.size,
+                    mtime: item.deletedAt,
+                    isDirectory: item.isDirectory,
+                    trashId: item.trashId // Needed for restore
+                });
+            }
+        }
+        res.json({ contents: validTrash });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/delete', async (req, res) => {
+    // Soft delete
+    try {
+        const targetPath = getSafePath(req.body.path);
+        const stats = await fs.stat(targetPath);
+        const trashId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const trashPath = path.join(TRASH_ROOT, trashId);
+
+        await fs.move(targetPath, trashPath);
+
+        const meta = await getMetadata();
+        if (!meta.trash) meta.trash = [];
+
+        meta.trash.push({
+            trashId,
+            originalPath: req.body.path, // relative path
+            originalName: path.basename(targetPath),
+            isDirectory: stats.isDirectory(),
+            size: stats.size,
+            deletedAt: new Date()
+        });
+
+        await saveMetadata(meta);
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/restore', async (req, res) => {
+    try {
+        const { trashId } = req.body;
+        const meta = await getMetadata();
+        const trashIndex = meta.trash.findIndex(t => t.trashId === trashId);
+
+        if (trashIndex === -1) {
+            return res.status(404).json({ error: 'Item not found in trash records' });
+        }
+
+        const item = meta.trash[trashIndex];
+        const trashPath = path.join(TRASH_ROOT, trashId);
+        const originalFullPath = getSafePath(item.originalPath);
+
+        // Ensure parent exists
+        await fs.ensureDir(path.dirname(originalFullPath));
+
+        if (await fs.pathExists(originalFullPath)) {
+            // If original path occupied, append restored-timestamp
+            const ext = path.extname(originalFullPath);
+            const name = path.basename(originalFullPath, ext);
+            const newName = `${name}-restored-${Date.now()}${ext}`;
+            const newPath = path.join(path.dirname(originalFullPath), newName);
+            await fs.move(trashPath, newPath);
+        } else {
+            await fs.move(trashPath, originalFullPath);
+        }
+
+        // Remove from metadata
+        meta.trash.splice(trashIndex, 1);
+        await saveMetadata(meta);
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/empty-trash', async (req, res) => {
+    try {
+        await fs.emptyDir(TRASH_ROOT);
+        const meta = await getMetadata();
+        meta.trash = [];
+        await saveMetadata(meta);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+// Move items
+app.post('/api/move', async (req, res) => {
+    try {
+        const { sources, destination } = req.body;
+        if (!Array.isArray(sources) || sources.length === 0) {
+            return res.status(400).json({ error: 'No items selected' });
+        }
+
+        const destPathFullPath = getSafePath(destination);
+        const destStats = await fs.stat(destPathFullPath);
+        if (!destStats.isDirectory()) {
+            return res.status(400).json({ error: 'Destination is not a directory' });
+        }
+
+        // Track successful moves to update starred
+        const moves = [];
+
+        const results = await Promise.allSettled(sources.map(async (src) => {
+            const srcFullPath = getSafePath(src);
+            const fileName = path.basename(srcFullPath);
+            const destFullPath = path.join(destPathFullPath, fileName);
+
+            if (destFullPath.startsWith(srcFullPath) && destFullPath !== srcFullPath) {
+                throw new Error(`Cannot move folder '${fileName}' into itself`);
+            }
+            if (await fs.pathExists(destFullPath)) {
+                throw new Error(`Item '${fileName}' already exists in destination`);
+            }
+
+            await fs.move(srcFullPath, destFullPath);
+
+            moves.push({ from: src, to: path.join(destination, fileName).replace(/\\/g, '/') });
+            return fileName;
+        }));
+
+        // Update starred paths if moved
+        if (moves.length > 0) {
+            const meta = await getMetadata();
+            let changed = false;
+            moves.forEach(m => {
+                if (meta.starred && meta.starred.includes(m.from)) {
+                    meta.starred = meta.starred.map(s => s === m.from ? m.to : s);
+                    changed = true;
+                }
+            });
+            if (changed) await saveMetadata(meta);
+        }
+
+        const errors = results.filter(r => r.status === 'rejected').map(r => r.reason.message);
+        const success = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+
+        res.json({ success: true, moved: success, errors: errors.length > 0 ? errors : undefined });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Create folder
 app.post('/api/folder', async (req, res) => {
     try {
@@ -122,11 +366,9 @@ app.post('/api/folder', async (req, res) => {
     }
 });
 
-// Upload configuration
+// Upload
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        // Important: req.body must come before files in the formData on frontend
-        // If not, we fallback to a temp location or root, but frontend fix handles this.
         let uploadPath = STORAGE_ROOT;
         try {
             if (req.body.path) {
@@ -135,8 +377,7 @@ const storage = multer.diskStorage({
         } catch (e) {
             console.error("Path error", e);
         }
-
-        fs.ensureDirSync(uploadPath); // Ensure specific directory exists
+        fs.ensureDirSync(uploadPath);
         cb(null, uploadPath);
     },
     filename: (req, file, cb) => {
@@ -145,12 +386,11 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Upload Endpoint
 app.post('/api/upload', upload.array('files'), (req, res) => {
     res.json({ success: true, count: req.files.length });
 });
 
-// Download (Attachment)
+// Download
 app.get('/api/download', async (req, res) => {
     try {
         const filePath = getSafePath(req.query.path);
@@ -164,14 +404,14 @@ app.get('/api/download', async (req, res) => {
     }
 });
 
-// Stream (Inline View)
+// Stream
 app.get('/api/stream', async (req, res) => {
     try {
         const filePath = getSafePath(req.query.path);
         if (await fs.pathExists(filePath)) {
             const mimeType = mime.lookup(filePath) || 'application/octet-stream';
             res.setHeader('Content-Type', mimeType);
-            res.setHeader('Content-Disposition', 'inline'); // Important for viewing
+            res.setHeader('Content-Disposition', 'inline');
             fs.createReadStream(filePath).pipe(res);
         } else {
             res.status(404).send('File not found');
@@ -181,18 +421,7 @@ app.get('/api/stream', async (req, res) => {
     }
 });
 
-// Delete
-app.delete('/api/delete', async (req, res) => {
-    try {
-        const targetPath = getSafePath(req.body.path);
-        await fs.remove(targetPath);
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Catch all for SPA
+// SPA Catch All
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'frontend/dist/index.html'));
 });

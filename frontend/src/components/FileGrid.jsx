@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Folder, FileText, Image, Film, Music, Code, File as FileIcon, Download, Trash, FileArchive, CheckCircle } from 'lucide-react';
+import { Folder, FileText, Image, Film, Music, Code, File as FileIcon, Download, Trash, FileArchive, CheckCircle, Star, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'date-fns';
 
@@ -17,63 +17,48 @@ const getIcon = (name, isDir, size = 56) => {
 };
 
 // --- GRID ITEM ---
-const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDelete, onMove }) => {
-    // Handling Drag Start
+const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDelete, onMove, activeTab, onStar, onRestore }) => {
     const handleDragStart = (e) => {
-        // We set ID or JSON of selected items
-        // If the item being dragged is NOT in selection, we select it first (technically)
-        // But for simplicity, we assume user drags something they selected or single item
-
+        if (activeTab === 'trash') {
+            e.preventDefault(); // No dragging from trash
+            return;
+        }
         let dragData = [file.path || file.name];
-        // If we have a multi-selection and this item is part of it, drag all
-        // We need 'selectedFiles' passed down or assume the parent handles the grouping?
-        // Actually, HTML5 Drag API is per element. 
-        // We'll set a custom data type 'application/nas-items'
-
         e.dataTransfer.setData('application/nas-items', JSON.stringify(dragData));
         e.dataTransfer.effectAllowed = 'move';
     };
 
-    // Handling Drag Over (for Folders)
     const handleDragOver = (e) => {
-        if (!file.isDirectory) return;
+        if (!file.isDirectory || activeTab === 'trash') return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         e.currentTarget.classList.add('bg-blue-500/20', 'border-blue-500');
     };
 
     const handleDragLeave = (e) => {
-        if (!file.isDirectory) return;
+        if (!file.isDirectory || activeTab === 'trash') return;
         e.currentTarget.classList.remove('bg-blue-500/20', 'border-blue-500');
     };
 
     const handleDrop = (e) => {
-        if (!file.isDirectory) return;
+        if (!file.isDirectory || activeTab === 'trash') return;
         e.preventDefault();
-        e.stopPropagation(); // Stop propagation so main upload area doesn't trigger
+        e.stopPropagation();
         e.currentTarget.classList.remove('bg-blue-500/20', 'border-blue-500');
 
         const data = e.dataTransfer.getData('application/nas-items');
         if (data) {
-            // Internal Move
             try {
                 const items = JSON.parse(data);
                 onMove(items, file.path || file.name);
             } catch (err) {
                 console.error("Parse error", err);
             }
-        } else {
-            // External File Drop (Optional: could handle uploading TO this specific folder)
-            // For now, let's just ignore or let it bubble if we want global upload
-            // But user asked to "put in the particular folder"
-            // We can check e.dataTransfer.files
-            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                // Forward to a prop that handles uploading to a specific target
-                // For now, we'll just log it or left for future "Upload to Target" feature
-                // Implementing "Upload to Target" requires changing App.jsx logic significantly
-            }
         }
     };
+
+    const isTrash = activeTab === 'trash';
+    const isStarredTab = activeTab === 'starred';
 
     return (
         <motion.div
@@ -88,7 +73,7 @@ const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
                     : 'bg-[var(--bg-card)] border-transparent hover:border-[var(--border)] hover:bg-[var(--bg-card-hover)] shadow-sm'
                 } selection-none`}
             onClick={(e) => onSelect(file, e)}
-            draggable
+            draggable={!isTrash}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -96,25 +81,38 @@ const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
             onDoubleClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                if (isTrash) return;
                 file.isDirectory ? onNavigate(file.name) : onDownload(file);
             }}
         >
-            {/* Selection Checkbox (Visible on hover or selected) */}
+            {/* Selection Checkbox */}
             <div className={`absolute top-3 left-3 transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                 <div className={`w-5 h-5 rounded-md border flex items-center justify-center ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-slate-500 bg-slate-800/50'}`}>
                     {isSelected && <CheckCircle size={14} className="text-white" />}
                 </div>
             </div>
 
+            {/* Actions */}
             <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-all duration-200 flex gap-1 transform translate-y-2 group-hover:translate-y-0 z-10">
-                {!file.isDirectory && (
-                    <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-2 hover:bg-[var(--bg-card-hover)] rounded-lg text-blue-400 hover:text-blue-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Download">
-                        <Download size={16} />
+                {isTrash ? (
+                    <button onClick={(e) => { e.stopPropagation(); onRestore(file); }} className="p-2 hover:bg-green-500/10 rounded-lg text-green-400 hover:text-green-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Restore">
+                        <RotateCcw size={16} />
                     </button>
+                ) : (
+                    <>
+                        <button onClick={(e) => { e.stopPropagation(); onStar(file); }} className={`p-2 hover:bg-yellow-500/10 rounded-lg transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)] ${isStarredTab ? 'text-yellow-400' : 'text-slate-400 hover:text-yellow-400'}`} title={isStarredTab ? "Unstar" : "Star"}>
+                            <Star size={16} fill={isStarredTab ? "currentColor" : "none"} />
+                        </button>
+                        {!file.isDirectory && (
+                            <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-2 hover:bg-[var(--bg-card-hover)] rounded-lg text-blue-400 hover:text-blue-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Download">
+                                <Download size={16} />
+                            </button>
+                        )}
+                        <button onClick={(e) => { e.stopPropagation(); onDelete(file); }} className="p-2 hover:bg-red-500/10 rounded-lg text-red-400 hover:text-red-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Delete">
+                            <Trash size={16} />
+                        </button>
+                    </>
                 )}
-                <button onClick={(e) => { e.stopPropagation(); onDelete(file); }} className="p-2 hover:bg-red-500/10 rounded-lg text-red-400 hover:text-red-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Delete">
-                    <Trash size={16} />
-                </button>
             </div>
 
             <div className="w-20 h-20 flex items-center justify-center drop-shadow-2xl pointer-events-none">
@@ -125,7 +123,7 @@ const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
                 <p className="text-sm font-medium text-[var(--text-primary)] truncate w-full px-2" title={file.name}>{file.name}</p>
                 <div className="flex flex-col items-center gap-0.5">
                     <p className="text-[11px] font-medium text-[var(--text-secondary)] uppercase tracking-wider">
-                        {file.isDirectory ? 'Folder' : format(new Date(file.mtime), 'MMM d, yyyy')}
+                        {isTrash && file.trashId ? 'Deleted' : (file.isDirectory ? 'Folder' : format(new Date(file.mtime), 'MMM d, yyyy'))}
                     </p>
                     {!file.isDirectory && <span className="text-[10px] text-[var(--text-secondary)] bg-[var(--bg-card-hover)] px-2 py-0.5 rounded-full">{(file.size / 1024).toFixed(1)} KB</span>}
                 </div>
@@ -135,28 +133,31 @@ const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
 };
 
 // --- LIST ITEM ---
-const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDelete, onMove }) => {
-    // (Duplicate drag handlers for list view - ideally refactor to hook)
+const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDelete, onMove, activeTab, onStar, onRestore }) => {
     const handleDragStart = (e) => {
+        if (activeTab === 'trash') {
+            e.preventDefault();
+            return;
+        }
         let dragData = [file.path || file.name];
         e.dataTransfer.setData('application/nas-items', JSON.stringify(dragData));
         e.dataTransfer.effectAllowed = 'move';
     };
 
     const handleDragOver = (e) => {
-        if (!file.isDirectory) return;
+        if (!file.isDirectory || activeTab === 'trash') return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         e.currentTarget.classList.add('bg-blue-500/10');
     };
 
     const handleDragLeave = (e) => {
-        if (!file.isDirectory) return;
+        if (!file.isDirectory || activeTab === 'trash') return;
         e.currentTarget.classList.remove('bg-blue-500/10');
     };
 
     const handleDrop = (e) => {
-        if (!file.isDirectory) return;
+        if (!file.isDirectory || activeTab === 'trash') return;
         e.preventDefault();
         e.stopPropagation();
         e.currentTarget.classList.remove('bg-blue-500/10');
@@ -168,6 +169,9 @@ const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
             } catch (err) { }
         }
     };
+
+    const isTrash = activeTab === 'trash';
+    const isStarredTab = activeTab === 'starred';
 
     return (
         <motion.div
@@ -181,7 +185,7 @@ const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
                     : 'hover:bg-[var(--bg-card-hover)] border-[var(--border)]'
                 }`}
             onClick={(e) => onSelect(file, e)}
-            draggable
+            draggable={!isTrash}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -189,6 +193,7 @@ const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
             onDoubleClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                if (isTrash) return;
                 file.isDirectory ? onNavigate(file.name) : onDownload(file);
             }}
         >
@@ -206,7 +211,7 @@ const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
 
             <div className="hidden sm:block w-32 text-right pointer-events-none">
                 <p className="text-xs text-[var(--text-secondary)]">
-                    {file.isDirectory ? '-' : format(new Date(file.mtime), 'MMM d, yyyy')}
+                    {isTrash && file.trashId ? 'Deleted' : (file.isDirectory ? '-' : format(new Date(file.mtime), 'MMM d, yyyy'))}
                 </p>
             </div>
 
@@ -215,26 +220,44 @@ const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
             </div>
 
             <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity px-2">
-                {!file.isDirectory && (
-                    <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-[var(--text-secondary)] hover:text-blue-400 transition-colors" title="Download">
-                        <Download size={16} />
+                {isTrash ? (
+                    <button onClick={(e) => { e.stopPropagation(); onRestore(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-green-400 hover:text-green-300 transition-colors" title="Restore">
+                        <RotateCcw size={16} />
                     </button>
+                ) : (
+                    <>
+                        <button onClick={(e) => { e.stopPropagation(); onStar(file); }} className={`p-1.5 hover:bg-[var(--bg-card)] rounded-md transition-colors ${isStarredTab ? 'text-yellow-400' : 'text-slate-400 hover:text-yellow-400'}`} title={isStarredTab ? "Unstar" : "Star"}>
+                            <Star size={16} fill={isStarredTab ? "currentColor" : "none"} />
+                        </button>
+                        {!file.isDirectory && (
+                            <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-[var(--text-secondary)] hover:text-blue-400 transition-colors" title="Download">
+                                <Download size={16} />
+                            </button>
+                        )}
+                        <button onClick={(e) => { e.stopPropagation(); onDelete(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-[var(--text-secondary)] hover:text-red-400 transition-colors" title="Delete">
+                            <Trash size={16} />
+                        </button>
+                    </>
                 )}
-                <button onClick={(e) => { e.stopPropagation(); onDelete(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-[var(--text-secondary)] hover:text-red-400 transition-colors" title="Delete">
-                    <Trash size={16} />
-                </button>
             </div>
         </motion.div>
     );
 };
 
-const FileGrid = ({ files, onNavigate, onDownload, onDelete, onMove, isLoading, viewMode, showHidden, selectedFiles, onSelectFile, onClearSelection }) => {
+const FileGrid = ({
+    files, onNavigate, onDownload, onDelete, onMove, isLoading, viewMode, showHidden,
+    selectedFiles, onSelectFile, onClearSelection, activeTab, onStar, onRestore
+}) => {
     const filteredFiles = useMemo(() => {
         return (files || []).filter(f => showHidden || !f.name.startsWith('.')).sort((a, b) => {
+            if (activeTab === 'recent') {
+                // Recent is already sorted by backend
+                return 0;
+            }
             if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
             return a.isDirectory ? -1 : 1;
         });
-    }, [files, showHidden]);
+    }, [files, showHidden, activeTab]);
 
     if (isLoading) {
         return (
@@ -252,8 +275,13 @@ const FileGrid = ({ files, onNavigate, onDownload, onDelete, onMove, isLoading, 
                     <Folder size={64} strokeWidth={1} />
                 </div>
                 <div className="text-center">
-                    <p className="text-lg font-medium text-[var(--text-secondary)]">Empty Directory</p>
-                    <p className="text-sm">Drag and drop files here to upload</p>
+                    <p className="text-lg font-medium text-[var(--text-secondary)]">
+                        {activeTab === 'trash' ? 'Trash is empty' :
+                            activeTab === 'starred' ? 'No starred items' :
+                                activeTab === 'recent' ? 'No recent files' :
+                                    'Empty Directory'}
+                    </p>
+                    {activeTab === 'files' && <p className="text-sm">Drag and drop files here to upload</p>}
                 </div>
             </div>
         );
@@ -284,6 +312,9 @@ const FileGrid = ({ files, onNavigate, onDownload, onDelete, onMove, isLoading, 
                                 onDownload={onDownload}
                                 onDelete={onDelete}
                                 onMove={onMove}
+                                activeTab={activeTab}
+                                onStar={onStar}
+                                onRestore={onRestore}
                             />
                         ))}
                     </AnimatePresence>
@@ -308,6 +339,9 @@ const FileGrid = ({ files, onNavigate, onDownload, onDelete, onMove, isLoading, 
                         onDownload={onDownload}
                         onDelete={onDelete}
                         onMove={onMove}
+                        activeTab={activeTab}
+                        onStar={onStar}
+                        onRestore={onRestore}
                     />
                 ))}
             </AnimatePresence>
