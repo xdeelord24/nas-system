@@ -20,9 +20,10 @@ export const moveItems = (sources, destination) => api.post('/move', { sources, 
 export const uploadFiles = (formData) => api.post('/upload', formData);
 export const createShareLink = (path) => api.post('/share', { path });
 export const getShareInfo = (token) => api.get(`/share/info/${token}`);
+export const getShareFolderContents = (token, path = '') => api.get(`/share/list/${token}?path=${encodeURIComponent(path)}`);
 
 export const downloadFileUrl = (path) => `/api/download?path=${encodeURIComponent(path)}`;
-export const getShareDownloadUrl = (token) => `/api/share/download/${token}`;
+export const getShareDownloadUrl = (token, path = '') => `/api/share/download/${token}?path=${encodeURIComponent(path)}`;
 
 export const streamFileUrl = (path) => `/api/stream?path=${encodeURIComponent(path)}`;
 

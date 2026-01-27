@@ -17,10 +17,10 @@ const getIcon = (name, isDir, size = 56) => {
 };
 
 // --- GRID ITEM ---
-const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDelete, onMove, activeTab, onStar, onRestore, onShare }) => {
+const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDelete, onMove, activeTab, onStar, onRestore, onShare, readOnly }) => {
     const handleDragStart = (e) => {
-        if (activeTab === 'trash') {
-            e.preventDefault(); // No dragging from trash
+        if (activeTab === 'trash' || readOnly) {
+            e.preventDefault();
             return;
         }
         let dragData = [file.path || file.name];
@@ -29,19 +29,19 @@ const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
     };
 
     const handleDragOver = (e) => {
-        if (!file.isDirectory || activeTab === 'trash') return;
+        if (!file.isDirectory || activeTab === 'trash' || readOnly) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         e.currentTarget.classList.add('bg-blue-500/20', 'border-blue-500');
     };
 
     const handleDragLeave = (e) => {
-        if (!file.isDirectory || activeTab === 'trash') return;
+        if (!file.isDirectory || activeTab === 'trash' || readOnly) return;
         e.currentTarget.classList.remove('bg-blue-500/20', 'border-blue-500');
     };
 
     const handleDrop = (e) => {
-        if (!file.isDirectory || activeTab === 'trash') return;
+        if (!file.isDirectory || activeTab === 'trash' || readOnly) return;
         e.preventDefault();
         e.stopPropagation();
         e.currentTarget.classList.remove('bg-blue-500/20', 'border-blue-500');
@@ -72,8 +72,8 @@ const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
                     ? 'bg-blue-500/20 border-blue-500 shadow-lg shadow-blue-500/10'
                     : 'bg-[var(--bg-card)] border-transparent hover:border-[var(--border)] hover:bg-[var(--bg-card-hover)] shadow-sm'
                 } selection-none`}
-            onClick={(e) => onSelect(file, e)}
-            draggable={!isTrash}
+            onClick={(e) => onSelect && onSelect(file, e)}
+            draggable={!isTrash && !readOnly}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -85,16 +85,25 @@ const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
                 file.isDirectory ? onNavigate(file.name) : onDownload(file);
             }}
         >
-            {/* Selection Checkbox */}
-            <div className={`absolute top-3 left-3 transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                <div className={`w-5 h-5 rounded-md border flex items-center justify-center ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-slate-500 bg-slate-800/50'}`}>
-                    {isSelected && <CheckCircle size={14} className="text-white" />}
+            {/* Selection Checkbox (Hidden in ReadOnly) */}
+            {!readOnly && (
+                <div className={`absolute top-3 left-3 transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                    <div className={`w-5 h-5 rounded-md border flex items-center justify-center ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-slate-500 bg-slate-800/50'}`}>
+                        {isSelected && <CheckCircle size={14} className="text-white" />}
+                    </div>
                 </div>
-            </div>
+            )}
 
             {/* Actions */}
             <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-all duration-200 flex gap-1 transform translate-y-2 group-hover:translate-y-0 z-10">
-                {isTrash ? (
+                {readOnly ? (
+                    // ReadOnly Actions (e.g., Download only)
+                    !file.isDirectory && (
+                        <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-2 hover:bg-[var(--bg-card-hover)] rounded-lg text-blue-400 hover:text-blue-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Download">
+                            <Download size={16} />
+                        </button>
+                    )
+                ) : isTrash ? (
                     <button onClick={(e) => { e.stopPropagation(); onRestore(file); }} className="p-2 hover:bg-green-500/10 rounded-lg text-green-400 hover:text-green-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Restore">
                         <RotateCcw size={16} />
                     </button>
@@ -103,15 +112,15 @@ const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
                         <button onClick={(e) => { e.stopPropagation(); onStar(file); }} className={`p-2 hover:bg-yellow-500/10 rounded-lg transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)] ${isStarredTab ? 'text-yellow-400' : 'text-slate-400 hover:text-yellow-400'}`} title={isStarredTab ? "Unstar" : "Star"}>
                             <Star size={16} fill={isStarredTab ? "currentColor" : "none"} />
                         </button>
+
+                        <button onClick={(e) => { e.stopPropagation(); onShare(file); }} className="p-2 hover:bg-blue-500/10 rounded-lg text-blue-400 hover:text-blue-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Share via Link">
+                            <Share2 size={16} />
+                        </button>
+
                         {!file.isDirectory && (
-                            <>
-                                <button onClick={(e) => { e.stopPropagation(); onShare(file); }} className="p-2 hover:bg-blue-500/10 rounded-lg text-blue-400 hover:text-blue-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Share via Link">
-                                    <Share2 size={16} />
-                                </button>
-                                <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-2 hover:bg-[var(--bg-card-hover)] rounded-lg text-blue-400 hover:text-blue-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Download">
-                                    <Download size={16} />
-                                </button>
-                            </>
+                            <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-2 hover:bg-[var(--bg-card-hover)] rounded-lg text-blue-400 hover:text-blue-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Download">
+                                <Download size={16} />
+                            </button>
                         )}
                         <button onClick={(e) => { e.stopPropagation(); onDelete(file); }} className="p-2 hover:bg-red-500/10 rounded-lg text-red-400 hover:text-red-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Delete">
                             <Trash size={16} />
@@ -138,9 +147,9 @@ const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
 };
 
 // --- LIST ITEM ---
-const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDelete, onMove, activeTab, onStar, onRestore, onShare }) => {
+const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDelete, onMove, activeTab, onStar, onRestore, onShare, readOnly }) => {
     const handleDragStart = (e) => {
-        if (activeTab === 'trash') {
+        if (activeTab === 'trash' || readOnly) {
             e.preventDefault();
             return;
         }
@@ -150,19 +159,19 @@ const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
     };
 
     const handleDragOver = (e) => {
-        if (!file.isDirectory || activeTab === 'trash') return;
+        if (!file.isDirectory || activeTab === 'trash' || readOnly) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = 'move';
         e.currentTarget.classList.add('bg-blue-500/10');
     };
 
     const handleDragLeave = (e) => {
-        if (!file.isDirectory || activeTab === 'trash') return;
+        if (!file.isDirectory || activeTab === 'trash' || readOnly) return;
         e.currentTarget.classList.remove('bg-blue-500/10');
     };
 
     const handleDrop = (e) => {
-        if (!file.isDirectory || activeTab === 'trash') return;
+        if (!file.isDirectory || activeTab === 'trash' || readOnly) return;
         e.preventDefault();
         e.stopPropagation();
         e.currentTarget.classList.remove('bg-blue-500/10');
@@ -189,8 +198,8 @@ const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
                     ? 'bg-blue-500/10 border-blue-500/20'
                     : 'hover:bg-[var(--bg-card-hover)] border-[var(--border)]'
                 }`}
-            onClick={(e) => onSelect(file, e)}
-            draggable={!isTrash}
+            onClick={(e) => onSelect && onSelect(file, e)}
+            draggable={!isTrash && !readOnly}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -202,7 +211,7 @@ const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
                 file.isDirectory ? onNavigate(file.name) : onDownload(file);
             }}
         >
-            <div className={`w-5 h-5 rounded-md border flex-shrink-0 flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-slate-600 group-hover:border-slate-400'}`}>
+            <div className={`w-5 h-5 rounded-md border flex-shrink-0 flex items-center justify-center transition-colors ${isSelected ? 'bg-blue-500 border-blue-500' : 'border-slate-600 group-hover:border-slate-400'} ${readOnly ? 'invisible' : ''}`}>
                 {isSelected && <CheckCircle size={14} className="text-white" />}
             </div>
 
@@ -225,7 +234,13 @@ const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
             </div>
 
             <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity px-2">
-                {isTrash ? (
+                {readOnly ? (
+                    !file.isDirectory && (
+                        <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-[var(--text-secondary)] hover:text-blue-400 transition-colors" title="Download">
+                            <Download size={16} />
+                        </button>
+                    )
+                ) : isTrash ? (
                     <button onClick={(e) => { e.stopPropagation(); onRestore(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-green-400 hover:text-green-300 transition-colors" title="Restore">
                         <RotateCcw size={16} />
                     </button>
@@ -234,11 +249,11 @@ const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
                         <button onClick={(e) => { e.stopPropagation(); onStar(file); }} className={`p-1.5 hover:bg-[var(--bg-card)] rounded-md transition-colors ${isStarredTab ? 'text-yellow-400' : 'text-slate-400 hover:text-yellow-400'}`} title={isStarredTab ? "Unstar" : "Star"}>
                             <Star size={16} fill={isStarredTab ? "currentColor" : "none"} />
                         </button>
-                        {!file.isDirectory && (
-                            <button onClick={(e) => { e.stopPropagation(); onShare(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-[var(--text-secondary)] hover:text-blue-400 transition-colors" title="Share via Link">
-                                <Share2 size={16} />
-                            </button>
-                        )}
+
+                        <button onClick={(e) => { e.stopPropagation(); onShare(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-[var(--text-secondary)] hover:text-blue-400 transition-colors" title="Share via Link">
+                            <Share2 size={16} />
+                        </button>
+
                         {!file.isDirectory && (
                             <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-[var(--text-secondary)] hover:text-blue-400 transition-colors" title="Download">
                                 <Download size={16} />
@@ -256,12 +271,13 @@ const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
 
 const FileGrid = ({
     files, onNavigate, onDownload, onDelete, onMove, isLoading, viewMode, showHidden,
-    selectedFiles, onSelectFile, onClearSelection, activeTab, onStar, onRestore, onShare
+    selectedFiles, onSelectFile, onClearSelection, activeTab, onStar, onRestore, onShare,
+    readOnly = false
 }) => {
     const filteredFiles = useMemo(() => {
         return (files || []).filter(f => showHidden || !f.name.startsWith('.')).sort((a, b) => {
             if (activeTab === 'recent') {
-                return 0; // Already sorted
+                return 0;
             }
             if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
             return a.isDirectory ? -1 : 1;
@@ -290,17 +306,20 @@ const FileGrid = ({
                                 activeTab === 'recent' ? 'No recent files' :
                                     'Empty Directory'}
                     </p>
-                    {activeTab === 'files' && <p className="text-sm">Drag and drop files here to upload</p>}
                 </div>
             </div>
         );
     }
 
-    // Wrapper to handle clear selection on background click
     const handleBackgroundClick = (e) => {
-        if (e.target === e.currentTarget) {
+        if (e.target === e.currentTarget && onClearSelection) {
             onClearSelection();
         }
+    };
+
+    const commonProps = {
+        onNavigate, onDownload, onDelete, onMove, activeTab,
+        onStar, onRestore, onShare, readOnly
     };
 
     if (viewMode === 'list') {
@@ -315,16 +334,9 @@ const FileGrid = ({
                             <FileItemList
                                 key={file.path || file.name}
                                 file={file}
-                                isSelected={selectedFiles.has(file.path || file.name)}
+                                isSelected={selectedFiles?.has(file.path || file.name)}
                                 onSelect={onSelectFile}
-                                onNavigate={onNavigate}
-                                onDownload={onDownload}
-                                onDelete={onDelete}
-                                onMove={onMove}
-                                activeTab={activeTab}
-                                onStar={onStar}
-                                onRestore={onRestore}
-                                onShare={onShare}
+                                {...commonProps}
                             />
                         ))}
                     </AnimatePresence>
@@ -343,16 +355,9 @@ const FileGrid = ({
                     <FileItemGrid
                         key={file.path || file.name}
                         file={file}
-                        isSelected={selectedFiles.has(file.path || file.name)}
+                        isSelected={selectedFiles?.has(file.path || file.name)}
                         onSelect={onSelectFile}
-                        onNavigate={onNavigate}
-                        onDownload={onDownload}
-                        onDelete={onDelete}
-                        onMove={onMove}
-                        activeTab={activeTab}
-                        onStar={onStar}
-                        onRestore={onRestore}
-                        onShare={onShare}
+                        {...commonProps}
                     />
                 ))}
             </AnimatePresence>

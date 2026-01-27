@@ -271,6 +271,7 @@ app.post('/api/move', async (req, res) => {
         if (moves.length > 0) {
             const meta = await getMetadata();
             let changed = false;
+            // Update starred
             if (meta.starred) {
                 meta.starred = meta.starred.map(s => {
                     const match = moves.find(m => m.from === s);
@@ -278,6 +279,7 @@ app.post('/api/move', async (req, res) => {
                     return s;
                 });
             }
+            // Update shared links
             if (meta.shared) {
                 Object.keys(meta.shared).forEach(token => {
                     const share = meta.shared[token];
@@ -376,7 +378,7 @@ app.post('/api/share', async (req, res) => {
     }
 });
 
-// NEW: Info Endpoint for View Page
+// Info Endpoint for View Page (supports dirs)
 app.get('/api/share/info/:token', async (req, res) => {
     try {
         const { token } = req.params;
@@ -392,8 +394,9 @@ app.get('/api/share/info/:token', async (req, res) => {
 
         res.json({
             name: path.basename(filePath),
-            size: stats.size,
-            mimeType: mime.lookup(filePath) || 'application/octet-stream',
+            size: stats.isDirectory() ? 0 : stats.size, // Size 0 for folders for now
+            isDirectory: stats.isDirectory(),
+            mimeType: stats.isDirectory() ? 'directory' : (mime.lookup(filePath) || 'application/octet-stream'),
             created: share.created
         });
     } catch (err) {
@@ -402,21 +405,74 @@ app.get('/api/share/info/:token', async (req, res) => {
     }
 });
 
-// NEW: Download Endpoint
+// List contents of a shared folder
+app.get('/api/share/list/:token', async (req, res) => {
+    try {
+        const { token } = req.params;
+        const subPath = req.query.path || '';
+
+        const meta = await getMetadata();
+        if (!meta.shared || !meta.shared[token]) return res.status(404).json({ error: 'Link invalid' });
+
+        const share = meta.shared[token];
+        const rootSharePath = getSafePath(share.path);
+
+        // Ensure requested subpath is safe relative to the share root
+        const fullRequestedPath = path.join(rootSharePath, subPath);
+        if (!fullRequestedPath.startsWith(rootSharePath)) {
+            return res.status(403).json({ error: 'Access denied' });
+        }
+
+        const stats = await fs.stat(fullRequestedPath);
+        if (!stats.isDirectory()) return res.status(400).json({ error: 'Not a directory' });
+
+        const items = await fs.readdir(fullRequestedPath);
+        const contents = await Promise.all(items.filter(i => !i.startsWith('.')).map(async (item) => {
+            const itemPath = path.join(fullRequestedPath, item);
+            const itemStats = await fs.stat(itemPath);
+            // Return path relative to the share root!
+            const relPath = path.relative(rootSharePath, itemPath).replace(/\\/g, '/');
+            return {
+                name: item,
+                isDirectory: itemStats.isDirectory(),
+                size: itemStats.size,
+                mtime: itemStats.mtime,
+                path: relPath
+            };
+        }));
+
+        res.json({ contents, path: subPath });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Download Endpoint with subpath support
 app.get('/api/share/download/:token', async (req, res) => {
     try {
         const { token } = req.params;
+        const subPath = req.query.path || '';
+
         const meta = await getMetadata();
 
         if (!meta.shared || !meta.shared[token]) return res.status(404).send('Link invalid or expired');
 
         const share = meta.shared[token];
-        const filePath = getSafePath(share.path);
+        const rootSharePath = getSafePath(share.path);
 
-        if (!await fs.pathExists(filePath)) return res.status(404).send('File shared no longer exists');
+        const targetPath = path.join(rootSharePath, subPath);
+        if (!targetPath.startsWith(rootSharePath)) return res.status(403).send('Access denied');
+
+        if (!await fs.pathExists(targetPath)) return res.status(404).send('File shared no longer exists');
+
+        const stats = await fs.stat(targetPath);
+        if (stats.isDirectory()) {
+            // For now, disallow directory download (or todo: zip)
+            return res.status(400).send('Directory download not supported yet');
+        }
 
         // Force download
-        res.download(filePath);
+        res.download(targetPath);
     } catch (err) {
         console.error("Share Download Error:", err);
         res.status(500).send('Error downloading file');
