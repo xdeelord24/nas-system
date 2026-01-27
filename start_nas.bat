@@ -1,0 +1,3 @@
+@echo off
+echo Starting NAS System...
+cmd /k "node server.js"
