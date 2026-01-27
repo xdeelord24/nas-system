@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Folder, FileText, Image, Film, Music, Code, File as FileIcon, Download, Trash, FileArchive, CheckCircle, Star, RotateCcw } from 'lucide-react';
+import { Folder, FileText, Image, Film, Music, Code, File as FileIcon, Download, Trash, FileArchive, CheckCircle, Star, RotateCcw, Share2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'date-fns';
 
@@ -17,7 +17,7 @@ const getIcon = (name, isDir, size = 56) => {
 };
 
 // --- GRID ITEM ---
-const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDelete, onMove, activeTab, onStar, onRestore }) => {
+const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDelete, onMove, activeTab, onStar, onRestore, onShare }) => {
     const handleDragStart = (e) => {
         if (activeTab === 'trash') {
             e.preventDefault(); // No dragging from trash
@@ -104,9 +104,14 @@ const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
                             <Star size={16} fill={isStarredTab ? "currentColor" : "none"} />
                         </button>
                         {!file.isDirectory && (
-                            <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-2 hover:bg-[var(--bg-card-hover)] rounded-lg text-blue-400 hover:text-blue-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Download">
-                                <Download size={16} />
-                            </button>
+                            <>
+                                <button onClick={(e) => { e.stopPropagation(); onShare(file); }} className="p-2 hover:bg-blue-500/10 rounded-lg text-blue-400 hover:text-blue-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Share via Link">
+                                    <Share2 size={16} />
+                                </button>
+                                <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-2 hover:bg-[var(--bg-card-hover)] rounded-lg text-blue-400 hover:text-blue-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Download">
+                                    <Download size={16} />
+                                </button>
+                            </>
                         )}
                         <button onClick={(e) => { e.stopPropagation(); onDelete(file); }} className="p-2 hover:bg-red-500/10 rounded-lg text-red-400 hover:text-red-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Delete">
                             <Trash size={16} />
@@ -133,7 +138,7 @@ const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
 };
 
 // --- LIST ITEM ---
-const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDelete, onMove, activeTab, onStar, onRestore }) => {
+const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDelete, onMove, activeTab, onStar, onRestore, onShare }) => {
     const handleDragStart = (e) => {
         if (activeTab === 'trash') {
             e.preventDefault();
@@ -230,6 +235,11 @@ const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
                             <Star size={16} fill={isStarredTab ? "currentColor" : "none"} />
                         </button>
                         {!file.isDirectory && (
+                            <button onClick={(e) => { e.stopPropagation(); onShare(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-[var(--text-secondary)] hover:text-blue-400 transition-colors" title="Share via Link">
+                                <Share2 size={16} />
+                            </button>
+                        )}
+                        {!file.isDirectory && (
                             <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-[var(--text-secondary)] hover:text-blue-400 transition-colors" title="Download">
                                 <Download size={16} />
                             </button>
@@ -246,13 +256,12 @@ const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
 
 const FileGrid = ({
     files, onNavigate, onDownload, onDelete, onMove, isLoading, viewMode, showHidden,
-    selectedFiles, onSelectFile, onClearSelection, activeTab, onStar, onRestore
+    selectedFiles, onSelectFile, onClearSelection, activeTab, onStar, onRestore, onShare
 }) => {
     const filteredFiles = useMemo(() => {
         return (files || []).filter(f => showHidden || !f.name.startsWith('.')).sort((a, b) => {
             if (activeTab === 'recent') {
-                // Recent is already sorted by backend
-                return 0;
+                return 0; // Already sorted
             }
             if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
             return a.isDirectory ? -1 : 1;
@@ -315,6 +324,7 @@ const FileGrid = ({
                                 activeTab={activeTab}
                                 onStar={onStar}
                                 onRestore={onRestore}
+                                onShare={onShare}
                             />
                         ))}
                     </AnimatePresence>
@@ -342,6 +352,7 @@ const FileGrid = ({
                         activeTab={activeTab}
                         onStar={onStar}
                         onRestore={onRestore}
+                        onShare={onShare}
                     />
                 ))}
             </AnimatePresence>

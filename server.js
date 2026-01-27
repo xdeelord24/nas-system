@@ -4,6 +4,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const cors = require('cors');
 const mime = require('mime-types');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = 3000;
@@ -17,7 +18,7 @@ fs.ensureDirSync(TRASH_ROOT);
 
 // Initialize metadata file if not exists
 if (!fs.existsSync(DATA_FILE)) {
-    fs.writeJsonSync(DATA_FILE, { starred: [], trash: [] });
+    fs.writeJsonSync(DATA_FILE, { starred: [], trash: [], shared: {} });
 }
 
 app.use(cors());
@@ -39,27 +40,31 @@ const getSafePath = (reqPath) => {
 // Helper: Metadata Management
 const getMetadata = async () => {
     try {
-        return await fs.readJson(DATA_FILE);
+        const data = await fs.readJson(DATA_FILE);
+        if (!data.shared) data.shared = {}; // Ensure shared exists
+        return data;
     } catch (e) {
-        return { starred: [], trash: [] };
+        console.error("Metadata read error:", e.message);
+        return { starred: [], trash: [], shared: {} };
     }
 };
 
 const saveMetadata = async (data) => {
-    await fs.writeJson(DATA_FILE, data, { spaces: 2 });
+    try {
+        await fs.writeJson(DATA_FILE, data, { spaces: 2 });
+    } catch (e) {
+        console.error("Metadata write error:", e.message);
+    }
 };
 
-// Helper: Recursive Scan for Recent Files
+// ... (Existing helper functions like getRecentFilesRecursive) ...
 async function getRecentFilesRecursive(dir) {
     let results = [];
     const items = await fs.readdir(dir);
-
     for (const item of items) {
-        if (item.startsWith('.')) continue; // Skip hidden files/dirs
-
+        if (item.startsWith('.')) continue;
         const fullPath = path.join(dir, item);
         const stats = await fs.stat(fullPath);
-
         if (stats.isDirectory()) {
             const subResults = await getRecentFilesRecursive(fullPath);
             results = results.concat(subResults);
@@ -112,30 +117,22 @@ app.get('/api/files', async (req, res) => {
     }
 });
 
-// Recent Files
 app.get('/api/recent', async (req, res) => {
     try {
         const allFiles = await getRecentFilesRecursive(STORAGE_ROOT);
-        // Sort by mtime desc
         allFiles.sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
-        // Return top 50
         res.json({ contents: allFiles.slice(0, 50) });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// Starred Files
 app.get('/api/starred', async (req, res) => {
     try {
         const meta = await getMetadata();
         const starredPaths = meta.starred || [];
-
         const distinctPaths = [...new Set(starredPaths)];
-
         const contents = [];
-        const validPaths = [];
-
         for (const p of distinctPaths) {
             try {
                 const fullPath = getSafePath(p);
@@ -148,17 +145,9 @@ app.get('/api/starred', async (req, res) => {
                         mtime: stats.mtime,
                         path: p
                     });
-                    validPaths.push(p);
                 }
-            } catch (e) {
-                // Ignore missing files, will maintain validPaths
-            }
+            } catch (e) { }
         }
-
-        // Clean up metadata if some files are missing? 
-        // Optional: might be better to keep them if temporary unavailable.
-        // For now, let's just return what exists.
-
         res.json({ contents });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -172,52 +161,34 @@ app.post('/api/star', async (req, res) => {
 
         const meta = await getMetadata();
         let list = new Set(meta.starred || []);
-
-        if (starred) {
-            list.add(itemPath);
-        } else {
-            list.delete(itemPath);
-        }
+        if (starred) list.add(itemPath);
+        else list.delete(itemPath);
 
         meta.starred = [...list];
         await saveMetadata(meta);
-
         res.json({ success: true, starred });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// Trash
+// Trash Endpoints
 app.get('/api/trash', async (req, res) => {
     try {
         const meta = await getMetadata();
-        // Return metadata entry for trash items
-        // We verify if they still exist in trash folder
         const trash = meta.trash || [];
         const validTrash = [];
-
         for (const item of trash) {
             const trashPath = path.join(TRASH_ROOT, item.trashId);
             if (await fs.pathExists(trashPath)) {
-                validTrash.push({
-                    name: item.originalName,
-                    path: item.originalPath, // Just for display
-                    size: item.size,
-                    mtime: item.deletedAt,
-                    isDirectory: item.isDirectory,
-                    trashId: item.trashId // Needed for restore
-                });
+                validTrash.push({ ...item, path: item.originalPath });
             }
         }
         res.json({ contents: validTrash });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.delete('/api/delete', async (req, res) => {
-    // Soft delete
     try {
         const targetPath = getSafePath(req.body.path);
         const stats = await fs.stat(targetPath);
@@ -228,22 +199,17 @@ app.delete('/api/delete', async (req, res) => {
 
         const meta = await getMetadata();
         if (!meta.trash) meta.trash = [];
-
         meta.trash.push({
             trashId,
-            originalPath: req.body.path, // relative path
+            originalPath: req.body.path,
             originalName: path.basename(targetPath),
             isDirectory: stats.isDirectory(),
             size: stats.size,
             deletedAt: new Date()
         });
-
         await saveMetadata(meta);
-
         res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/restore', async (req, res) => {
@@ -251,37 +217,25 @@ app.post('/api/restore', async (req, res) => {
         const { trashId } = req.body;
         const meta = await getMetadata();
         const trashIndex = meta.trash.findIndex(t => t.trashId === trashId);
-
-        if (trashIndex === -1) {
-            return res.status(404).json({ error: 'Item not found in trash records' });
-        }
+        if (trashIndex === -1) return res.status(404).json({ error: 'Item not found' });
 
         const item = meta.trash[trashIndex];
         const trashPath = path.join(TRASH_ROOT, trashId);
         const originalFullPath = getSafePath(item.originalPath);
 
-        // Ensure parent exists
         await fs.ensureDir(path.dirname(originalFullPath));
-
         if (await fs.pathExists(originalFullPath)) {
-            // If original path occupied, append restored-timestamp
             const ext = path.extname(originalFullPath);
             const name = path.basename(originalFullPath, ext);
             const newName = `${name}-restored-${Date.now()}${ext}`;
-            const newPath = path.join(path.dirname(originalFullPath), newName);
-            await fs.move(trashPath, newPath);
+            await fs.move(trashPath, path.join(path.dirname(originalFullPath), newName));
         } else {
             await fs.move(trashPath, originalFullPath);
         }
-
-        // Remove from metadata
         meta.trash.splice(trashIndex, 1);
         await saveMetadata(meta);
-
         res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/empty-trash', async (req, res) => {
@@ -291,120 +245,87 @@ app.post('/api/empty-trash', async (req, res) => {
         meta.trash = [];
         await saveMetadata(meta);
         res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
 
 // Move items
 app.post('/api/move', async (req, res) => {
     try {
         const { sources, destination } = req.body;
-        if (!Array.isArray(sources) || sources.length === 0) {
-            return res.status(400).json({ error: 'No items selected' });
-        }
-
         const destPathFullPath = getSafePath(destination);
         const destStats = await fs.stat(destPathFullPath);
-        if (!destStats.isDirectory()) {
-            return res.status(400).json({ error: 'Destination is not a directory' });
-        }
+        if (!destStats.isDirectory()) return res.status(400).json({ error: 'Destination is not a directory' });
 
-        // Track successful moves to update starred
         const moves = [];
-
         const results = await Promise.allSettled(sources.map(async (src) => {
             const srcFullPath = getSafePath(src);
             const fileName = path.basename(srcFullPath);
             const destFullPath = path.join(destPathFullPath, fileName);
-
-            if (destFullPath.startsWith(srcFullPath) && destFullPath !== srcFullPath) {
-                throw new Error(`Cannot move folder '${fileName}' into itself`);
-            }
-            if (await fs.pathExists(destFullPath)) {
-                throw new Error(`Item '${fileName}' already exists in destination`);
-            }
-
+            if (destFullPath.startsWith(srcFullPath) && destFullPath !== srcFullPath) throw new Error('Cannot move into self');
+            if (await fs.pathExists(destFullPath)) throw new Error('Exists');
             await fs.move(srcFullPath, destFullPath);
-
             moves.push({ from: src, to: path.join(destination, fileName).replace(/\\/g, '/') });
             return fileName;
         }));
 
-        // Update starred paths if moved
         if (moves.length > 0) {
             const meta = await getMetadata();
             let changed = false;
-            moves.forEach(m => {
-                if (meta.starred && meta.starred.includes(m.from)) {
-                    meta.starred = meta.starred.map(s => s === m.from ? m.to : s);
-                    changed = true;
-                }
-            });
+            if (meta.starred) {
+                meta.starred = meta.starred.map(s => {
+                    const match = moves.find(m => m.from === s);
+                    if (match) { changed = true; return match.to; }
+                    return s;
+                });
+            }
+            if (meta.shared) {
+                Object.keys(meta.shared).forEach(token => {
+                    const share = meta.shared[token];
+                    const match = moves.find(m => m.from === share.path);
+                    if (match) {
+                        share.path = match.to;
+                        changed = true;
+                    }
+                });
+            }
+
             if (changed) await saveMetadata(meta);
         }
-
         const errors = results.filter(r => r.status === 'rejected').map(r => r.reason.message);
         const success = results.filter(r => r.status === 'fulfilled').map(r => r.value);
-
         res.json({ success: true, moved: success, errors: errors.length > 0 ? errors : undefined });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Create folder
 app.post('/api/folder', async (req, res) => {
     try {
         const { currentPath, folderName } = req.body;
         const targetPath = path.join(getSafePath(currentPath), folderName || 'New Folder');
         await fs.ensureDir(targetPath);
         res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Upload
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         let uploadPath = STORAGE_ROOT;
-        try {
-            if (req.body.path) {
-                uploadPath = getSafePath(req.body.path);
-            }
-        } catch (e) {
-            console.error("Path error", e);
-        }
+        try { if (req.body.path) uploadPath = getSafePath(req.body.path); } catch (e) { }
         fs.ensureDirSync(uploadPath);
         cb(null, uploadPath);
     },
-    filename: (req, file, cb) => {
-        cb(null, file.originalname);
-    }
+    filename: (req, file, cb) => cb(null, file.originalname)
 });
 const upload = multer({ storage });
+app.post('/api/upload', upload.array('files'), (req, res) => res.json({ success: true }));
 
-app.post('/api/upload', upload.array('files'), (req, res) => {
-    res.json({ success: true, count: req.files.length });
-});
-
-// Download
 app.get('/api/download', async (req, res) => {
     try {
         const filePath = getSafePath(req.query.path);
-        if (await fs.pathExists(filePath)) {
-            res.download(filePath);
-        } else {
-            res.status(404).send('File not found');
-        }
-    } catch (err) {
-        res.status(404).send('File not found');
-    }
+        if (await fs.pathExists(filePath)) res.download(filePath);
+        else res.status(404).send('File not found');
+    } catch (err) { res.status(404).send('File not found'); }
 });
 
-// Stream
 app.get('/api/stream', async (req, res) => {
     try {
         const filePath = getSafePath(req.query.path);
@@ -413,15 +334,97 @@ app.get('/api/stream', async (req, res) => {
             res.setHeader('Content-Type', mimeType);
             res.setHeader('Content-Disposition', 'inline');
             fs.createReadStream(filePath).pipe(res);
-        } else {
-            res.status(404).send('File not found');
+        } else res.status(404).send('File not found');
+    } catch (err) { res.status(404).send('File not found'); }
+});
+
+// --- SHARING ---
+app.post('/api/share', async (req, res) => {
+    try {
+        const { path: itemPath } = req.body;
+        console.log("Generating share link for:", itemPath);
+
+        if (!itemPath) return res.status(400).json({ error: 'Path required' });
+
+        // Verify existence
+        const fullPath = getSafePath(itemPath);
+        if (!await fs.pathExists(fullPath)) {
+            console.error("File not found at:", fullPath);
+            return res.status(404).json({ error: 'File not found' });
         }
+
+        const token = crypto.randomBytes(16).toString('hex');
+        const meta = await getMetadata();
+
+        meta.shared[token] = {
+            path: itemPath,
+            created: new Date(),
+        };
+        await saveMetadata(meta);
+
+        // Generate full URL
+        const protocol = req.protocol;
+        const host = req.get('host');
+        // Point to the frontend route /s/:token
+        const shareUrl = `${protocol}://${host}/s/${token}`;
+
+        console.log("Share link created:", shareUrl);
+        res.json({ success: true, link: shareUrl });
     } catch (err) {
-        res.status(404).send('File not found');
+        console.error("Share error:", err);
+        res.status(500).json({ error: err.message });
     }
 });
 
-// SPA Catch All
+// NEW: Info Endpoint for View Page
+app.get('/api/share/info/:token', async (req, res) => {
+    try {
+        const { token } = req.params;
+        const meta = await getMetadata();
+        if (!meta.shared || !meta.shared[token]) return res.status(404).json({ error: 'Link invalid or expired' });
+
+        const share = meta.shared[token];
+        const filePath = getSafePath(share.path);
+
+        if (!await fs.pathExists(filePath)) return res.status(404).json({ error: 'File shared no longer exists' });
+
+        const stats = await fs.stat(filePath);
+
+        res.json({
+            name: path.basename(filePath),
+            size: stats.size,
+            mimeType: mime.lookup(filePath) || 'application/octet-stream',
+            created: share.created
+        });
+    } catch (err) {
+        console.error("Share Info Error:", err);
+        res.status(500).json({ error: 'Error retrieving info' });
+    }
+});
+
+// NEW: Download Endpoint
+app.get('/api/share/download/:token', async (req, res) => {
+    try {
+        const { token } = req.params;
+        const meta = await getMetadata();
+
+        if (!meta.shared || !meta.shared[token]) return res.status(404).send('Link invalid or expired');
+
+        const share = meta.shared[token];
+        const filePath = getSafePath(share.path);
+
+        if (!await fs.pathExists(filePath)) return res.status(404).send('File shared no longer exists');
+
+        // Force download
+        res.download(filePath);
+    } catch (err) {
+        console.error("Share Download Error:", err);
+        res.status(500).send('Error downloading file');
+    }
+});
+
+// ----------------
+
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'frontend/dist/index.html'));
 });

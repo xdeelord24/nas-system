@@ -7,13 +7,23 @@ import Header from './components/Header';
 import FileGrid from './components/FileGrid';
 import SettingsModal from './components/SettingsModal';
 import FileViewerModal from './components/FileViewerModal';
+import SharedFileView from './components/SharedFileView';
 import {
   getFiles, getRecentFiles, getStarredFiles, getTrashFiles,
   createFolder, deleteItem, uploadFiles, downloadFileUrl,
-  moveItems, toggleStar, restoreItem, emptyTrash
+  moveItems, toggleStar, restoreItem, emptyTrash, createShareLink
 } from './api';
 
 function App() {
+  // ROUTING Logic (Manual)
+  const pathname = window.location.pathname;
+  if (pathname.startsWith('/s/')) {
+    const token = pathname.split('/')[2];
+    return <SharedFileView token={token} />;
+  }
+
+  // --- Main App Logic (Existing) ---
+
   const [currentPath, setCurrentPath] = useState('');
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -107,13 +117,6 @@ function App() {
   };
 
   useEffect(() => {
-    // When tab changes, reset path if moving to 'files' tab, or use empty path for others
-    // Actually, if we switch back to 'files', we might want to remember last path?
-    // For now, reset to root if switching to 'files' from others, OR keep currentPath if it makes sense.
-    // If switching FROM a virtual tab TO 'files', reset path to logic root?
-    // Let's just fetch with current path if 'files', relative to that.
-
-    // Simplification: always fetch root if changing tabs unless its 'files' (which might retain state, but for now reset)
     if (activeTab === 'files') {
       fetchData('');
     } else {
@@ -124,21 +127,6 @@ function App() {
   // Handlers
   const handleNavigate = (folderName) => {
     if (activeTab !== 'files') {
-      // If in recent/starred/trash, navigating into a folder should probably switch to 'files' view at that location?
-      // OR filtering recent files?
-      // Use case: User clicks a folder in "Starred". They expect to see contents.
-      // So we should switch to 'files' tab and navigate to that path.
-      // But the path in "Starred" items is the full relative path.
-
-      // Let's find the file object to get the full path?
-      // The `folderName` passed here is just the name. 
-      // We need the full path. FileGrid calls `onNavigate(file.name)`.
-      // We should update FileGrid to pass the full item or path if available.
-
-      // For now, if we are in virtual views, we might block navigation or switch context.
-      // Better: FileGrid should pass the item. Let's fix FileGrid later. 
-      // Assuming we fix FileGrid to pass item or we find it:
-
       const file = files.find(f => f.name === folderName);
       if (file && file.path) {
         setActiveTab('files');
@@ -176,17 +164,7 @@ function App() {
   };
 
   const handleDelete = async (file) => {
-    // If in trash, we might want "delete forever" or not support it yet (api just has empty trash)
     if (activeTab === 'trash') {
-      // Cannot delete individual from trash in this MVP unless we add endpoint
-      // We only have emptyTrash.
-      // Let's say: "Delete permanently" not implemented per file yet, or use `delete` with special flag?
-      // The current `deleteItem` sends to trash.
-      // For now, disable delete in trash or implement permanent delete.
-      // Backend `delete` moves to trash.
-
-      // Actually, we can add a 'permanent' flag to delete api?
-      // For now, let's just allow Empty Trash.
       toast.error("Please use 'Empty Trash' to clear items");
       return;
     }
@@ -195,7 +173,7 @@ function App() {
     try {
       const path = activeTab === 'files'
         ? (currentPath ? `${currentPath}/${file.name}` : file.name)
-        : file.path; // In virtual views, file.path is valid relative path
+        : file.path;
 
       await deleteItem(path);
       toast.success('Moved to trash');
@@ -228,37 +206,29 @@ function App() {
   };
 
   const handleStar = async (file) => {
-    // Toggle star
-    // We need to know if it is currently starred. 
-    // For now, we can check if we are in 'starred' tab => unstar.
-    // If in 'files', we don't know easily without checking list. 
-    // Let's assume we pass `onStar` and the UI handles the state or optimistically updates.
-    // But `FileGrid` items don't know their starred state unless we pass it.
-
-    // Feature: Star/Unstar
-    // Ideally we fetch starred list alongside files to know status.
-    // MVP: Click "Star" adds it. If already matched, maybe toggle?
-    // Let's pass a `isStarred` boolean from the item if we have it?
-    // We don't have it in `getFiles`.
-
-    // Workaround: In `files` view, allow "Starring" blindly (add to star). 
-    // In `starred` view, allow "Unstarring".
-
     const path = file.path || (currentPath ? `${currentPath}/${file.name}` : file.name);
-
     try {
-      // If we are in Starred tab, we are unstarring
       const isUnstarring = activeTab === 'starred';
-      await toggleStar(path, !isUnstarring); // Toggle logic is better if we know state
-      // For now, force Star if in files (or toggle if we could).
-      // Actually backend 'toggle' endpoint was `path, starred` boolean.
-      // Let's just assume we want to STAR it if we click star.
-      // UI needs to be smart.
-
+      await toggleStar(path, !isUnstarring);
       toast.success(isUnstarring ? "Removed from Starred" : "Added to Starred");
       fetchData(currentPath, activeTab);
     } catch (err) {
       toast.error("Failed to update star status");
+    }
+  };
+
+  const handleShare = async (file) => {
+    const path = file.path || (currentPath ? `${currentPath}/${file.name}` : file.name);
+    try {
+      const res = await createShareLink(path);
+      if (res.data.success) {
+        await navigator.clipboard.writeText(res.data.link);
+        toast.success("Link copied to clipboard!");
+      }
+    } catch (err) {
+      console.error("Share error frontend:", err);
+      const errMsg = err.response?.data?.error || err.message;
+      toast.error("Failed to create share link: " + errMsg);
     }
   };
 
@@ -293,22 +263,9 @@ function App() {
 
   // Move Logic
   const handleMove = async (sourceIds, destinationFolder) => {
-    // sourceIds is Array of IDs (relative paths or names)
-    // destinationFolder is the name of the folder we dropped onto (in current directory)
-
     const destPath = currentPath ? `${currentPath}/${destinationFolder}` : destinationFolder;
 
     const validSources = sourceIds.map(src => {
-      // If we are in virtual view, src should be full path already (as it is the ID)
-      // If in files view, it might be just name?
-      // In `FileGrid`, we use `file.path || file.name` as ID.
-      // `file.path` is reliable relative path.
-      // So we should just use that.
-      // However, `getFiles` in root returns items where path might be `file.name` only?
-      // Let's ensure consistency.
-
-      // Use logic from before but trust IDs if they look like paths?
-      // If we in `files` and root, ID is name. path is name.
       if (activeTab === 'files' && currentPath && !src.includes('/')) {
         return `${currentPath}/${src}`;
       }
@@ -330,13 +287,11 @@ function App() {
   };
 
   const handleFileAction = (file) => {
-    // If trash, cannot view? Or view read-only?
-    // Let's assume view is allowed if file exists.
     if (activeTab === 'trash') return;
 
     // For navigation:
     if (file.isDirectory) {
-      handleNavigate(file.name); // This uses name, but handleNavigate needs to be smart
+      handleNavigate(file.name);
       return;
     }
 
@@ -517,6 +472,7 @@ function App() {
             activeTab={activeTab}
             onStar={handleStar}
             onRestore={handleRestore}
+            onShare={handleShare}
           />
         </main>
       </div>

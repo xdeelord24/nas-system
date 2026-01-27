@@ -18,7 +18,12 @@ export const emptyTrash = () => api.post('/empty-trash');
 
 export const moveItems = (sources, destination) => api.post('/move', { sources, destination });
 export const uploadFiles = (formData) => api.post('/upload', formData);
+export const createShareLink = (path) => api.post('/share', { path });
+export const getShareInfo = (token) => api.get(`/share/info/${token}`);
+
 export const downloadFileUrl = (path) => `/api/download?path=${encodeURIComponent(path)}`;
+export const getShareDownloadUrl = (token) => `/api/share/download/${token}`;
+
 export const streamFileUrl = (path) => `/api/stream?path=${encodeURIComponent(path)}`;
 
 export default api;
