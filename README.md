@@ -2,7 +2,8 @@
 
 MyNAS is a premium, self-hosted cloud storage system featuring a beautiful, responsive glassmorphism UI. It is designed to be lightweight, fast, and easy to deploy on anything from a high-end server to a Raspberry Pi.
 
-![MyNAS UI](https://placehold.co/800x400/1e293b/64748b?text=MyNAS+Dashboard)
+<img width="1842" height="1040" alt="image" src="https://github.com/user-attachments/assets/ab63973b-f897-4b8f-8afc-01d0c93d9a13" />
+
 
 ## ✨ Features
 
