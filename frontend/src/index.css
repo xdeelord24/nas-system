@@ -40,7 +40,7 @@
 }
 
 #root {
-  @apply h-screen w-full flex;
+  @apply h-screen w-full;
 }
 
 /* Custom Scrollbar */

@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Toaster, toast } from 'sonner';
-import { Home, ChevronRight, UploadCloud, FolderPlus, LayoutGrid, List, Trash2 } from 'lucide-react';
+import { Home, ChevronRight, UploadCloud, FolderPlus, LayoutGrid, List, Trash2, FolderInput, X, Star } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import FileGrid from './components/FileGrid';
@@ -31,6 +31,9 @@ function App() {
 
   // Selection State
   const [selectedFiles, setSelectedFiles] = useState(new Set());
+  const [lastSelectedId, setLastSelectedId] = useState(null);
+
+
 
   // Viewer State
   const [viewFile, setViewFile] = useState(null);
@@ -47,6 +50,15 @@ function App() {
       showHidden: false
     };
   });
+
+  // Computed Files (Sorting & Filtering moved here for Selection logic)
+  const processedFiles = useMemo(() => {
+    return (files || []).filter(f => f && f.name && (settings.showHidden || !f.name.startsWith('.'))).sort((a, b) => {
+      if (activeTab === 'recent') return 0;
+      if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
+      return a.isDirectory ? -1 : 1;
+    });
+  }, [files, settings.showHidden, activeTab]);
 
   // Save settings & Apply Theme
   useEffect(() => {
@@ -222,8 +234,48 @@ function App() {
     try {
       const res = await createShareLink(path);
       if (res.data.success) {
-        await navigator.clipboard.writeText(res.data.link);
-        toast.success("Link copied to clipboard!");
+        const link = res.data.link;
+
+        // Try modern clipboard API
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          try {
+            await navigator.clipboard.writeText(link);
+            toast.success("Link copied to clipboard!");
+            return;
+          } catch (err) {
+            console.warn("Clipboard API failed, trying fallback...");
+          }
+        }
+
+        // Fallback for insecure contexts (non-HTTPS)
+        try {
+          const textArea = document.createElement("textarea");
+          textArea.value = link;
+
+          // Ensure it's not visible but part of DOM
+          textArea.style.position = "fixed";
+          textArea.style.left = "-9999px";
+          textArea.style.top = "0";
+          document.body.appendChild(textArea);
+
+          textArea.focus();
+          textArea.select();
+
+          const successful = document.execCommand('copy');
+          document.body.removeChild(textArea);
+
+          if (successful) {
+            toast.success("Link copied to clipboard!");
+          } else {
+            throw new Error("Copy command failed");
+          }
+        } catch (err) {
+          // Final fallback: Show link to user
+          toast.message('Share Link Created', {
+            description: link,
+            duration: 10000, // Show for longer
+          });
+        }
       }
     } catch (err) {
       console.error("Share error frontend:", err);
@@ -237,22 +289,37 @@ function App() {
     const id = file.path || file.name;
     const newSelection = new Set(selectedFiles);
 
-    if (e.ctrlKey || e.metaKey) {
+    if (e.shiftKey && lastSelectedId) {
+      const lastIndex = processedFiles.findIndex(f => (f.path || f.name) === lastSelectedId);
+      const currentIndex = processedFiles.findIndex(f => (f.path || f.name) === id);
+
+      if (lastIndex !== -1 && currentIndex !== -1) {
+        const start = Math.min(lastIndex, currentIndex);
+        const end = Math.max(lastIndex, currentIndex);
+
+        if (!e.ctrlKey) newSelection.clear();
+
+        for (let i = start; i <= end; i++) {
+          const f = processedFiles[i];
+          newSelection.add(f.path || f.name);
+        }
+      } else {
+        // Fallback if index not found
+        newSelection.add(id);
+      }
+    } else if (e.ctrlKey || e.metaKey) {
       if (newSelection.has(id)) {
         newSelection.delete(id);
+        // Don't update lastSelectedId on deselect to allow subsequent shift operations? 
+        // Or updated to null? Standard is messy. Let's keep anchor if possible, or set to null.
       } else {
         newSelection.add(id);
+        setLastSelectedId(id);
       }
-    } else if (e.shiftKey) {
-      newSelection.add(id);
     } else {
-      if (!newSelection.has(id)) {
-        newSelection.clear();
-        newSelection.add(id);
-      } else {
-        newSelection.clear();
-        newSelection.add(id);
-      }
+      newSelection.clear();
+      newSelection.add(id);
+      setLastSelectedId(id);
     }
     setSelectedFiles(newSelection);
   };
@@ -299,6 +366,49 @@ function App() {
     setViewFile({ ...file, path });
   };
 
+  const handleDownload = (file) => {
+    const path = file.path || (currentPath ? `${currentPath}/${file.name}` : file.name);
+    const url = downloadFileUrl(path);
+    // Trigger download
+    window.location.href = url;
+  };
+
+  const handleBulkDelete = async () => {
+    if (!confirm(`Are you sure you want to delete ${selectedFiles.size} items?`)) return;
+    const toastId = toast.loading("Deleting items...");
+    try {
+      const items = Array.from(selectedFiles);
+      await Promise.all(items.map(path => deleteItem(path)));
+      toast.success("Items moved to trash", { id: toastId });
+      setSelectedFiles(new Set());
+      fetchData(currentPath, activeTab);
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to delete some items", { id: toastId });
+    }
+  };
+
+  const handleBulkMove = async () => {
+    const dest = prompt("Enter destination folder path (relative to root):", currentPath);
+    if (dest === null) return;
+
+    const toastId = toast.loading("Moving items...");
+    try {
+      const items = Array.from(selectedFiles);
+      const res = await moveItems(items, dest);
+      if (res.data.success) {
+        toast.success(`Moved ${res.data.moved.length} items`, { id: toastId });
+        setSelectedFiles(new Set());
+        fetchData(currentPath, activeTab);
+      } else {
+        toast.error("Move failed", { id: toastId });
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error("Move failed: " + (err.response?.data?.error || err.message), { id: toastId });
+    }
+  };
+
   const onDrop = useCallback(async (acceptedFiles) => {
     if (!acceptedFiles.length) return;
     if (activeTab !== 'files') {
@@ -308,7 +418,13 @@ function App() {
     setUploading(true);
     const formData = new FormData();
     formData.append('path', currentPath);
-    acceptedFiles.forEach(file => formData.append('files', file));
+    acceptedFiles.forEach(file => {
+      // Use file.path (react-dropzone) or webkitRelativePath, removing leading slash
+      const relativePath = file.path || file.webkitRelativePath || file.name;
+      const uploadName = relativePath.startsWith('/') ? relativePath.slice(1) : relativePath;
+      // Encode path to prevent stripping by browsers/proxies/multer
+      formData.append('files', file, encodeURIComponent(uploadName));
+    });
 
     try {
       await uploadFiles(formData);
@@ -394,9 +510,25 @@ function App() {
 
           <div className="flex gap-3">
             {selectedFiles.size > 0 && (
-              <span className="flex items-center px-3 py-1 bg-blue-500/10 text-blue-400 rounded-lg text-sm font-medium border border-blue-500/20">
-                {selectedFiles.size} selected
-              </span>
+              <div className="flex items-center gap-1 bg-[var(--accent)]/10 px-2 py-1.5 rounded-xl border border-[var(--accent)]/20 animate-in fade-in slide-in-from-top-2 duration-200 mr-2">
+                <span className="text-sm font-bold text-[var(--accent)] mr-2 px-2">
+                  {selectedFiles.size} <span className="font-normal opacity-80 hidden sm:inline">selected</span>
+                </span>
+
+                <div className="h-4 w-[1px] bg-[var(--accent)]/20 mx-1"></div>
+
+                <button onClick={handleBulkMove} className="p-1.5 text-[var(--accent)] hover:bg-[var(--accent)]/10 rounded-lg transition-colors relative group" title="Move Selected">
+                  <FolderInput size={18} />
+                  <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 text-xs bg-[var(--bg-sidebar)] text-[var(--text-primary)] px-2 py-1 rounded shadow-lg opacity-0 group-hover:opacity-100 transition pointer-events-none whitespace-nowrap z-50 border border-[var(--border)]">Move</span>
+                </button>
+                <button onClick={handleBulkDelete} className="p-1.5 text-red-400 hover:bg-red-500/10 rounded-lg transition-colors relative group" title="Delete Selected">
+                  <Trash2 size={18} />
+                  <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 text-xs bg-[var(--bg-sidebar)] text-[var(--text-primary)] px-2 py-1 rounded shadow-lg opacity-0 group-hover:opacity-100 transition pointer-events-none whitespace-nowrap z-50 border border-[var(--border)]">Delete</span>
+                </button>
+                <button onClick={handleClearSelection} className="p-1.5 text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-card-hover)] rounded-lg transition-colors ml-1" title="Clear Selection">
+                  <X size={18} />
+                </button>
+              </div>
             )}
 
             {/* View Toggle */}
@@ -458,9 +590,9 @@ function App() {
         {/* Main Content */}
         <main className="flex-1 overflow-hidden relative transition-colors duration-300">
           <FileGrid
-            files={files}
+            files={processedFiles}
             onNavigate={handleNavigate}
-            onDownload={handleFileAction}
+            onDownload={handleDownload}
             onDelete={handleDelete}
             onMove={handleMove}
             selectedFiles={selectedFiles}

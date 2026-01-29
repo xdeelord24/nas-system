@@ -14,6 +14,19 @@ const SharedFileView = ({ token }) => {
     const [folderContents, setFolderContents] = useState([]);
     const [loadingContents, setLoadingContents] = useState(false);
 
+    // Apply dark theme by default for public share view
+    useEffect(() => {
+        const root = document.documentElement;
+        root.style.setProperty('--bg-app', '#0f172a');
+        root.style.setProperty('--bg-sidebar', '#1e293b');
+        root.style.setProperty('--bg-card', '#1e293b');
+        root.style.setProperty('--bg-card-hover', '#334155');
+        root.style.setProperty('--text-primary', '#f8fafc');
+        root.style.setProperty('--text-secondary', '#94a3b8');
+        root.style.setProperty('--border', '#334155');
+        root.style.setProperty('--accent', '#3b82f6');
+    }, []);
+
     useEffect(() => {
         const fetchInfo = async () => {
             try {
@@ -96,25 +109,33 @@ const SharedFileView = ({ token }) => {
     // --- FOLDER VIEW ---
     if (info.isDirectory) {
         return (
-            <div className="min-h-screen bg-slate-950 flex flex-col text-slate-100 font-sans">
+            <div className="fixed inset-0 w-screen h-screen max-w-none bg-[var(--bg-app)] flex flex-col text-[var(--text-primary)] font-sans z-50 overflow-hidden">
                 {/* Header */}
-                <div className="bg-slate-900 border-b border-slate-800 p-4 sticky top-0 z-10">
-                    <div className="max-w-6xl mx-auto flex items-center justify-between">
+                <div className="bg-[var(--bg-sidebar)] border-b border-[var(--border)] p-4 sticky top-0 z-10 shadow-md">
+                    <div className="w-full flex items-center justify-between px-4">
                         <div className="flex items-center gap-3">
-                            <div className="p-2 bg-blue-500/10 rounded-lg">
-                                <FolderOpen className="text-blue-400" size={24} />
+                            <div className="p-2 bg-[var(--accent)]/10 rounded-lg">
+                                <FolderOpen className="text-[var(--accent)]" size={24} />
                             </div>
                             <div>
-                                <h1 className="font-bold text-lg">{info.name}</h1>
-                                <p className="text-xs text-slate-400">Shared Folder</p>
+                                <h1 className="font-bold text-lg text-[var(--text-primary)]">{info.name}</h1>
+                                <p className="text-xs text-[var(--text-secondary)]">Shared Folder</p>
                             </div>
                         </div>
+
+                        <button
+                            onClick={() => window.location.href = getShareDownloadUrl(token, currentPath)}
+                            className="bg-[var(--accent)] hover:bg-[var(--accent)]/90 text-white px-4 py-2 rounded-lg font-medium text-sm flex items-center gap-2 shadow-lg shadow-[var(--accent)]/20 transition-all hover:-translate-y-0.5"
+                        >
+                            <Download size={16} />
+                            {currentPath ? 'Download This Folder' : 'Download All'}
+                        </button>
                     </div>
                 </div>
 
                 {/* Breadcrumbs */}
                 <div className="bg-slate-900/50 border-b border-slate-800 px-4 py-2">
-                    <div className="max-w-6xl mx-auto flex items-center gap-2 text-sm text-slate-400 overflow-x-auto">
+                    <div className="w-full flex items-center gap-2 text-sm text-slate-400 overflow-x-auto px-4">
                         <button onClick={handleRootClick} className="hover:text-white transition-colors p-1 rounded hover:bg-slate-800">
                             <Home size={16} />
                         </button>
@@ -133,20 +154,22 @@ const SharedFileView = ({ token }) => {
                 </div>
 
                 {/* Content */}
-                <main className="flex-1 overflow-hidden relative max-w-6xl mx-auto w-full">
-                    <FileGrid
-                        files={folderContents}
-                        onNavigate={handleNavigate}
-                        onDownload={handleDownload}
-                        isLoading={loadingContents}
-                        viewMode="grid" // Allow switch? fixed for now
-                        readOnly={true}
-                        // Disable unrelated actions
-                        onDelete={() => { }}
-                        onMove={() => { }}
-                        onSelectFile={() => { }}
-                        selectedFiles={new Set()}
-                    />
+                <main className="flex-1 overflow-hidden relative w-full max-w-none mx-0">
+                    <div className="w-full max-w-none mx-0 h-full">
+                        <FileGrid
+                            files={folderContents}
+                            onNavigate={handleNavigate}
+                            onDownload={handleDownload}
+                            isLoading={loadingContents}
+                            viewMode="grid" // Allow switch? fixed for now
+                            readOnly={true}
+                            // Disable unrelated actions
+                            onDelete={() => { }}
+                            onMove={() => { }}
+                            onSelectFile={() => { }}
+                            selectedFiles={new Set()}
+                        />
+                    </div>
                 </main>
             </div>
         );

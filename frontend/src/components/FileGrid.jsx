@@ -98,11 +98,10 @@ const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
             <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-all duration-200 flex gap-1 transform translate-y-2 group-hover:translate-y-0 z-10">
                 {readOnly ? (
                     // ReadOnly Actions (e.g., Download only)
-                    !file.isDirectory && (
-                        <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-2 hover:bg-[var(--bg-card-hover)] rounded-lg text-blue-400 hover:text-blue-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Download">
-                            <Download size={16} />
-                        </button>
-                    )
+                    // ReadOnly Actions (e.g., Download only)
+                    <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-2 hover:bg-[var(--bg-card-hover)] rounded-lg text-blue-400 hover:text-blue-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Download">
+                        <Download size={16} />
+                    </button>
                 ) : isTrash ? (
                     <button onClick={(e) => { e.stopPropagation(); onRestore(file); }} className="p-2 hover:bg-green-500/10 rounded-lg text-green-400 hover:text-green-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Restore">
                         <RotateCcw size={16} />
@@ -117,11 +116,9 @@ const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
                             <Share2 size={16} />
                         </button>
 
-                        {!file.isDirectory && (
-                            <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-2 hover:bg-[var(--bg-card-hover)] rounded-lg text-blue-400 hover:text-blue-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Download">
-                                <Download size={16} />
-                            </button>
-                        )}
+                        <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-2 hover:bg-[var(--bg-card-hover)] rounded-lg text-blue-400 hover:text-blue-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Download">
+                            <Download size={16} />
+                        </button>
                         <button onClick={(e) => { e.stopPropagation(); onDelete(file); }} className="p-2 hover:bg-red-500/10 rounded-lg text-red-400 hover:text-red-300 transition-colors bg-[var(--bg-card)] shadow-lg border border-[var(--border)]" title="Delete">
                             <Trash size={16} />
                         </button>
@@ -139,7 +136,7 @@ const FileItemGrid = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
                     <p className="text-[11px] font-medium text-[var(--text-secondary)] uppercase tracking-wider">
                         {isTrash && file.trashId ? 'Deleted' : (file.isDirectory ? 'Folder' : format(new Date(file.mtime), 'MMM d, yyyy'))}
                     </p>
-                    {!file.isDirectory && <span className="text-[10px] text-[var(--text-secondary)] bg-[var(--bg-card-hover)] px-2 py-0.5 rounded-full">{(file.size / 1024).toFixed(1)} KB</span>}
+                    {file.isDirectory ? <span className="text-[10px] text-[var(--text-secondary)] bg-[var(--bg-card-hover)] px-2 py-0.5 rounded-full">-</span> : <span className="text-[10px] text-[var(--text-secondary)] bg-[var(--bg-card-hover)] px-2 py-0.5 rounded-full">{(file.size / 1024).toFixed(1)} KB</span>}
                 </div>
             </div>
         </motion.div>
@@ -235,11 +232,9 @@ const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
 
             <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity px-2">
                 {readOnly ? (
-                    !file.isDirectory && (
-                        <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-[var(--text-secondary)] hover:text-blue-400 transition-colors" title="Download">
-                            <Download size={16} />
-                        </button>
-                    )
+                    <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-[var(--text-secondary)] hover:text-blue-400 transition-colors" title="Download">
+                        <Download size={16} />
+                    </button>
                 ) : isTrash ? (
                     <button onClick={(e) => { e.stopPropagation(); onRestore(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-green-400 hover:text-green-300 transition-colors" title="Restore">
                         <RotateCcw size={16} />
@@ -254,11 +249,9 @@ const FileItemList = ({ file, isSelected, onSelect, onNavigate, onDownload, onDe
                             <Share2 size={16} />
                         </button>
 
-                        {!file.isDirectory && (
-                            <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-[var(--text-secondary)] hover:text-blue-400 transition-colors" title="Download">
-                                <Download size={16} />
-                            </button>
-                        )}
+                        <button onClick={(e) => { e.stopPropagation(); onDownload(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-[var(--text-secondary)] hover:text-blue-400 transition-colors" title="Download">
+                            <Download size={16} />
+                        </button>
                         <button onClick={(e) => { e.stopPropagation(); onDelete(file); }} className="p-1.5 hover:bg-[var(--bg-card)] rounded-md text-[var(--text-secondary)] hover:text-red-400 transition-colors" title="Delete">
                             <Trash size={16} />
                         </button>
@@ -274,15 +267,7 @@ const FileGrid = ({
     selectedFiles, onSelectFile, onClearSelection, activeTab, onStar, onRestore, onShare,
     readOnly = false
 }) => {
-    const filteredFiles = useMemo(() => {
-        return (files || []).filter(f => showHidden || !f.name.startsWith('.')).sort((a, b) => {
-            if (activeTab === 'recent') {
-                return 0;
-            }
-            if (a.isDirectory === b.isDirectory) return a.name.localeCompare(b.name);
-            return a.isDirectory ? -1 : 1;
-        });
-    }, [files, showHidden, activeTab]);
+    const filteredFiles = files;
 
     if (isLoading) {
         return (
@@ -347,7 +332,7 @@ const FileGrid = ({
 
     return (
         <div
-            className="p-8 grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-6 overflow-y-auto h-full content-start pb-20 custom-scrollbar"
+            className="p-8 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6 overflow-y-auto h-full content-start pb-20 custom-scrollbar"
             onClick={handleBackgroundClick}
         >
             <AnimatePresence>

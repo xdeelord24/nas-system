@@ -5,12 +5,26 @@ const path = require('path');
 const cors = require('cors');
 const mime = require('mime-types');
 const crypto = require('crypto');
+const os = require('os');
+const archiver = require('archiver');
 
 const app = express();
 const PORT = 3000;
 const STORAGE_ROOT = path.join(__dirname, 'storage');
 const TRASH_ROOT = path.join(STORAGE_ROOT, '.nas_trash');
 const DATA_FILE = path.join(__dirname, 'nas-metadata.json');
+const getLocalIp = () => {
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name]) {
+            // Skip internal and non-IPv4 addresses
+            if (iface.family === 'IPv4' && !iface.internal) {
+                return iface.address;
+            }
+        }
+    }
+    return 'localhost';
+};
 
 // Ensure necessary directories
 fs.ensureDirSync(STORAGE_ROOT);
@@ -181,7 +195,7 @@ app.get('/api/trash', async (req, res) => {
         for (const item of trash) {
             const trashPath = path.join(TRASH_ROOT, item.trashId);
             if (await fs.pathExists(trashPath)) {
-                validTrash.push({ ...item, path: item.originalPath });
+                validTrash.push({ ...item, name: item.originalName, path: item.originalPath });
             }
         }
         res.json({ contents: validTrash });
@@ -312,10 +326,23 @@ const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         let uploadPath = STORAGE_ROOT;
         try { if (req.body.path) uploadPath = getSafePath(req.body.path); } catch (e) { }
+
+        // Handle subdirectories preserved in originalname (from frontend)
+        // Decode the filename as we encoded it on frontend to preserve separators
+        const decodedName = decodeURIComponent(file.originalname);
+        const normalizedName = decodedName.replace(/\\/g, '/');
+        const dir = path.dirname(normalizedName);
+
+        if (dir && dir !== '.' && dir !== '/') {
+            // Sanitize to prevent directory traversal
+            const safeDir = dir.replace(/\.\./g, '').replace(/^\/+/, '');
+            uploadPath = path.join(uploadPath, safeDir);
+        }
+
         fs.ensureDirSync(uploadPath);
         cb(null, uploadPath);
     },
-    filename: (req, file, cb) => cb(null, file.originalname)
+    filename: (req, file, cb) => cb(null, path.basename(decodeURIComponent(file.originalname)))
 });
 const upload = multer({ storage });
 app.post('/api/upload', upload.array('files'), (req, res) => res.json({ success: true }));
@@ -323,8 +350,21 @@ app.post('/api/upload', upload.array('files'), (req, res) => res.json({ success:
 app.get('/api/download', async (req, res) => {
     try {
         const filePath = getSafePath(req.query.path);
-        if (await fs.pathExists(filePath)) res.download(filePath);
-        else res.status(404).send('File not found');
+        if (!await fs.pathExists(filePath)) return res.status(404).send('File not found');
+
+        const stats = await fs.stat(filePath);
+        if (stats.isDirectory()) {
+            const archive = archiver('zip', { zlib: { level: 9 } });
+            res.attachment(`${path.basename(filePath)}.zip`);
+
+            archive.on('error', err => res.status(500).send({ error: err.message }));
+            archive.pipe(res);
+            archive.directory(filePath, false);
+            archive.finalize();
+            return;
+        }
+
+        res.download(filePath);
     } catch (err) { res.status(404).send('File not found'); }
 });
 
@@ -366,7 +406,16 @@ app.post('/api/share', async (req, res) => {
 
         // Generate full URL
         const protocol = req.protocol;
-        const host = req.get('host');
+        let host = req.get('host');
+
+        // If localhost, try to replace with actual LAN IP for better sharing
+        if (host.includes('localhost') || host.includes('127.0.0.1')) {
+            const ip = getLocalIp();
+            // Keep the port if it exists in the original host header
+            const port = host.split(':')[1] || PORT;
+            host = `${ip}:${port}`;
+        }
+
         // Point to the frontend route /s/:token
         const shareUrl = `${protocol}://${host}/s/${token}`;
 
@@ -467,8 +516,21 @@ app.get('/api/share/download/:token', async (req, res) => {
 
         const stats = await fs.stat(targetPath);
         if (stats.isDirectory()) {
-            // For now, disallow directory download (or todo: zip)
-            return res.status(400).send('Directory download not supported yet');
+            // Stream zip
+            const archive = archiver('zip', {
+                zlib: { level: 9 }
+            });
+
+            res.attachment(`${share.path.split(/[\\/]/).pop()}.zip`);
+
+            archive.on('error', function (err) {
+                res.status(500).send({ error: err.message });
+            });
+
+            archive.pipe(res);
+            archive.directory(targetPath, false);
+            archive.finalize();
+            return;
         }
 
         // Force download
